@@ -29,6 +29,7 @@ npm run start
 - `GET /healthz`
 - `GET /llm/config`
 - `POST /evolution/jobs`
+- `POST /evolution/stream` (SSE stream response)
 - `GET /evolution/jobs/{jobId}`
 - `GET /evolution/jobs/{jobId}/candidates/{candidateId}`
 
@@ -70,6 +71,24 @@ curl -X POST http://localhost:43102/evolution/jobs \
 Then query job status:
 ```bash
 curl http://localhost:43102/evolution/jobs/<jobId>
+```
+
+Streamed generation example:
+```bash
+curl -N -X POST http://localhost:43102/evolution/stream \
+  -H 'content-type: application/json' \
+  -d '{
+    "targetUiId": "dashboard",
+    "preferenceStream": [
+      { "type": "like", "value": "premium modern" },
+      { "type": "pin", "familyId": "editorial/retro" },
+      { "type": "like", "value": "minimal swiss" }
+    ],
+    "generationConfig": {
+      "llmProvider": "mock",
+      "mode": "exploration"
+    }
+  }'
 ```
 
 ## Parameter enum space

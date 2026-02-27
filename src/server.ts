@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import { createJob, getJob, getCandidate } from "./store";
 import { LlmClient, loadLlmConfig } from "./llm-client";
+import { runEvolutionStream } from "./evolution/stream";
 
 const app = express();
 const port = Number(process.env.PORT || 43102);
@@ -29,6 +30,35 @@ app.get("/llm/config", (_req, res) => {
 app.post("/evolution/jobs", (req, res) => {
   const job = createJob(req.body || {});
   res.json({ jobId: job.jobId, status: job.status });
+});
+
+app.post("/evolution/stream", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const emit = (event: string, payload: Record<string, unknown>) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  try {
+    const result = await runEvolutionStream(req.body || {}, emit);
+    emit("stream.result", {
+      totalCandidates: result.totalCandidates,
+      topCandidates: result.topCandidates,
+      genreBoard: result.genreBoard,
+      paramGeneration: result.paramGeneration
+    });
+    emit("stream.done", { ok: true });
+  } catch (error) {
+    emit("stream.error", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+  } finally {
+    res.end();
+  }
 });
 
 app.get("/evolution/jobs/:jobId", (req, res) => {
