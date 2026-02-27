@@ -1,0 +1,18 @@
+{
+  "provider": "mock",
+  "gemini": {
+    "model": "gemini-2.0-flash",
+    "apiKeyEnv": "GEMINI_API_KEY",
+    "apiKey": ""
+  },
+  "nova": {
+    "modelId": "amazon.nova-lite-v1:0",
+    "awsRegion": "us-east-1",
+    "accessKeyIdEnv": "AWS_ACCESS_KEY_ID",
+    "secretAccessKeyEnv": "AWS_SECRET_ACCESS_KEY",
+    "sessionTokenEnv": "AWS_SESSION_TOKEN",
+    "accessKeyId": "",
+    "secretAccessKey": "",
+    "sessionToken": ""
+  }
+}
