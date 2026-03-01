@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { LLM_PARAM_ENUMS } from "./constants";
 import { runEvolution } from "./run";
 import type { DiversityRules, EvolutionJob, EvolutionMode, EvolutionResult, GenerationConfig } from "./types";
+import { loadRecentFocusFamilies } from "../history";
 
 type PreferenceEvent = {
   type?: "like" | "dislike" | "pin" | string;
@@ -10,7 +11,7 @@ type PreferenceEvent = {
   weight?: number;
 };
 
-type StreamRequest = {
+export type StreamRequest = {
   targetUiId?: string;
   baseThemeId?: string;
   generationConfig?: GenerationConfig;
@@ -85,7 +86,9 @@ function deriveConfigFromPreferences(
     .filter(Boolean) as string[];
 
   const seedFamilies = unique([...explicitFamilies, ...textFamilies, ...pinnedFamilies]);
-  const focusFamilies = broadenFamilies(seedFamilies, Math.max(6, seedFamilies.length * 3));
+  const historyFamilies = seedFamilies.length > 0 ? [] : loadRecentFocusFamilies(8, 12);
+  const mergedSeeds = unique([...seedFamilies, ...historyFamilies]);
+  const focusFamilies = broadenFamilies(mergedSeeds, Math.max(6, Math.max(mergedSeeds.length, 2) * 3));
 
   const mode: EvolutionMode =
     generationConfig?.mode || (pinnedFamilies.length > 0 || focusFamilies.length > 0 ? "exploitation" : "exploration");

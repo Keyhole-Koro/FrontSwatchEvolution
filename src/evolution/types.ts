@@ -24,7 +24,7 @@ export type GenerationConfig = {
   mode?: EvolutionMode;
   focusFamilies?: string[];
   diversityRules?: DiversityRules;
-  llmProvider?: "mock" | "gemini" | "nova";
+  llmProvider?: "gemini" | "nova";
   useLLMAesthetic?: boolean;
 };
 
@@ -62,7 +62,11 @@ export type Candidate = {
   designDNA: DesignDNA;
   tokenPatch: Record<string, number>;
   scores: CandidateScores;
-  artifactPaths: { screenshot: string; qaReport: string };
+  artifactPaths: {
+    screenshot: string;
+    qaReport: string;
+    sourceReactTsx: string;
+  };
   rank?: number;
   llmAesthetic?: { provider: unknown; reason: string | null; riskFlags: string[] };
 };

@@ -111,35 +111,27 @@ export async function applyLlmAestheticScores(
 ): Promise<Candidate[]> {
   const rescored: Candidate[] = [];
   for (const candidate of topCandidates) {
-    try {
-      const llm = await llmClient.scoreAesthetic({
-        candidateId: candidate.candidateId,
-        designDNA: candidate.designDNA
-      });
-      const llmScore = clamp(Number(llm.score || candidate.scores.aesthetics), 0, 1);
-      const mergedScore =
-        candidate.scores.readability * 0.25 +
-        candidate.scores.layoutSafety * 0.2 +
-        candidate.scores.brandConsistency * 0.2 +
-        llmScore * 0.25 +
-        candidate.scores.diversityBonus;
-
-      rescored.push({
-        ...candidate,
-        scores: {
-          ...candidate.scores,
-          aesthetics: llmScore,
-          score: clamp(mergedScore, 0, 1)
-        },
-        llmAesthetic: {
-          provider: llmClient.getProviderInfo().provider,
-          reason: llm.reason || null,
-          riskFlags: llm.riskFlags || []
-        }
-      });
-    } catch {
-      rescored.push(candidate);
-    }
+    const llm = await llmClient.scoreAesthetic({
+      candidateId: candidate.candidateId,
+      designDNA: candidate.params
+    });
+    const llmScore = clamp(Number(llm.score), 0, 1);
+    rescored.push({
+      ...candidate,
+      scores: {
+        readability: llmScore,
+        layoutSafety: llmScore,
+        brandConsistency: llmScore,
+        aesthetics: llmScore,
+        diversityBonus: 0,
+        score: llmScore
+      },
+      llmAesthetic: {
+        provider: llmClient.getProviderInfo().provider,
+        reason: llm.reason || null,
+        riskFlags: llm.riskFlags || []
+      }
+    });
   }
-  return rescored.sort((a, b) => b.scores.score - a.scores.score);
+  return rescored;
 }

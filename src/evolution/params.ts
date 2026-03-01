@@ -1,6 +1,6 @@
 import { LlmClient } from "../llm-client";
 import { DEFAULT_DIVERSITY_RULES, LLM_PARAM_ENUMS } from "./constants";
-import { clamp, shuffle } from "./utils";
+import { clamp } from "./utils";
 import type { DiversityRules, EvolutionJob, EvolutionMode, GenerationConfig, ParamValidation, Params } from "./types";
 
 export function getVisualFamilyId(params: Params): string {
@@ -171,84 +171,6 @@ export function normalizeFocusFamilies(input: string[] | undefined): string[] {
     : [];
 }
 
-function generateMockParamSets(
-  count: number,
-  diversityRules: Required<DiversityRules>,
-  mode: EvolutionMode,
-  focusFamilies: string[]
-): Params[] {
-  const candidates: Params[] = [];
-  const signatures = new Set<string>();
-
-  const densityPool = shuffle([...LLM_PARAM_ENUMS.densityProfile]);
-  const eraPool = shuffle([...LLM_PARAM_ENUMS.era]);
-  const vibePool = shuffle([...LLM_PARAM_ENUMS.vibe]);
-
-  const familyPool = focusFamilies
-    .map((family) => {
-      const [vibe, era] = family.split("/");
-      if (!(LLM_PARAM_ENUMS.vibe as readonly string[]).includes(vibe)) return null;
-      if (!(LLM_PARAM_ENUMS.era as readonly string[]).includes(era)) return null;
-      return { vibe, era };
-    })
-    .filter(Boolean) as Array<{ vibe: string; era: string }>;
-
-  let attempts = 0;
-  while (candidates.length < count && attempts < count * 100) {
-    const index = candidates.length;
-    const useFocusFamily = mode === "exploitation" && familyPool.length > 0 && Math.random() < 0.72;
-    const selectedFamily = useFocusFamily
-      ? familyPool[Math.floor(Math.random() * familyPool.length)]
-      : { vibe: vibePool[index % vibePool.length], era: eraPool[index % eraPool.length] };
-
-    const proposal: Params = {
-      vibe: selectedFamily.vibe,
-      era: selectedFamily.era,
-      densityProfile:
-        index < densityPool.length * Math.max(1, diversityRules.densityMinEach)
-          ? densityPool[index % densityPool.length]
-          : LLM_PARAM_ENUMS.densityProfile[Math.floor(Math.random() * LLM_PARAM_ENUMS.densityProfile.length)],
-      elevationProfile:
-        LLM_PARAM_ENUMS.elevationProfile[Math.floor(Math.random() * LLM_PARAM_ENUMS.elevationProfile.length)],
-      radiusProfile: LLM_PARAM_ENUMS.radiusProfile[Math.floor(Math.random() * LLM_PARAM_ENUMS.radiusProfile.length)],
-      colorStrategy:
-        LLM_PARAM_ENUMS.colorStrategy[Math.floor(Math.random() * LLM_PARAM_ENUMS.colorStrategy.length)]
-    };
-
-    const signature = stableSignature(proposal);
-    if (!signatures.has(signature)) {
-      signatures.add(signature);
-      candidates.push(proposal);
-    }
-
-    attempts += 1;
-  }
-
-  return candidates.slice(0, count);
-}
-
-function fillMissingCandidates(
-  validCandidates: Params[],
-  count: number,
-  diversityRules: Required<DiversityRules>,
-  mode: EvolutionMode,
-  focusFamilies: string[]
-): Params[] {
-  const signatures = new Set(validCandidates.map((item) => stableSignature(item)));
-  const fallbackPool = generateMockParamSets(count * 2, diversityRules, mode, focusFamilies);
-  const merged = [...validCandidates];
-
-  for (const candidate of fallbackPool) {
-    if (merged.length >= count) break;
-    const signature = stableSignature(candidate);
-    if (signatures.has(signature)) continue;
-    signatures.add(signature);
-    merged.push(candidate);
-  }
-
-  return merged.slice(0, count);
-}
-
 export async function generateParamSets(
   job: EvolutionJob,
   llmClient: LlmClient,
@@ -257,31 +179,6 @@ export async function generateParamSets(
   mode: EvolutionMode,
   focusFamilies: string[]
 ): Promise<{ params: Params[]; validation: ParamValidation }> {
-  const llmEnabled = llmClient.provider !== "mock";
-
-  if (!llmEnabled) {
-    const mockCandidates = generateMockParamSets(count, diversityRules, mode, focusFamilies);
-    const validation = validateParamsSets(mockCandidates, count, diversityRules);
-    if (!validation.ok) {
-      return {
-        params: fillMissingCandidates(validation.validCandidates, count, diversityRules, mode, focusFamilies),
-        validation: {
-          repaired: true,
-          attempts: 1,
-          errors: validation.errors
-        }
-      };
-    }
-    return {
-      params: validation.validCandidates,
-      validation: {
-        repaired: false,
-        attempts: 1,
-        errors: []
-      }
-    };
-  }
-
   const maxAttempts = 3;
   let attempts = 0;
   let current: unknown[] = [];
@@ -332,12 +229,7 @@ export async function generateParamSets(
     current = validation.validCandidates;
   }
 
-  return {
-    params: fillMissingCandidates(current as Params[], count, diversityRules, mode, focusFamilies),
-    validation: {
-      repaired: true,
-      attempts: maxAttempts,
-      errors: lastErrors
-    }
-  };
+  throw new Error(
+    `LLM params generation failed after ${maxAttempts} attempts: ${lastErrors.join("; ") || "validation failed"}`
+  );
 }

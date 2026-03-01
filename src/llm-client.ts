@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { BedrockRuntimeClient, ConverseCommand } from "@aws-sdk/client-bedrock-runtime";
 
-type Provider = "mock" | "gemini" | "nova";
+type Provider = "gemini" | "nova";
 
 type GeminiConfig = {
   model: string;
@@ -23,14 +23,13 @@ type NovaConfig = {
 
 type LlmConfig = {
   provider?: Provider;
-  gemini: GeminiConfig;
-  nova: NovaConfig;
+  gemini?: GeminiConfig;
+  nova?: NovaConfig;
 };
 
 type CompleteJsonInput<T> = {
   instruction: string;
   input: unknown;
-  fallback: T;
 };
 
 const CONFIG_PATH = path.resolve(__dirname, "../config/llm-config.json");
@@ -45,10 +44,9 @@ function requireString(value: unknown, label: string): void {
 function resolveSecret(rawValue: unknown, envKey: unknown, label: string): string {
   if (typeof envKey === "string" && envKey.trim().length > 0) {
     const value = process.env[envKey];
-    if (!value || value.trim().length === 0) {
-      throw new Error(`Missing required environment secret: ${envKey} for ${label}`);
+    if (value && value.trim().length > 0) {
+      return value;
     }
-    return value;
   }
 
   if (typeof rawValue === "string" && rawValue.trim().length > 0) {
@@ -77,16 +75,28 @@ export function loadLlmConfig(): LlmConfig {
     throw new Error("Invalid llm-config.json: root object is required");
   }
 
-  if (!parsed.gemini || typeof parsed.gemini !== "object") {
-    throw new Error("Invalid llm-config.json: gemini object is required");
+  const provider = (process.env.LLM_PROVIDER || parsed.provider) as Provider;
+  if (!provider) {
+    throw new Error("Invalid llm-config.json: provider is required (gemini or nova)");
   }
-  if (!parsed.nova || typeof parsed.nova !== "object") {
-    throw new Error("Invalid llm-config.json: nova object is required");
+  if (!["gemini", "nova"].includes(provider)) {
+    throw new Error(`Invalid llm-config.json: unsupported provider '${String(parsed.provider)}'`);
   }
 
-  requireString(parsed.gemini.model, "gemini.model");
-  requireString(parsed.nova.modelId, "nova.modelId");
-  requireString(parsed.nova.awsRegion, "nova.awsRegion");
+  if (provider === "gemini") {
+    if (!parsed.gemini || typeof parsed.gemini !== "object") {
+      throw new Error("Invalid llm-config.json: gemini object is required for provider=gemini");
+    }
+    requireString(parsed.gemini.model, "gemini.model");
+  }
+
+  if (provider === "nova") {
+    if (!parsed.nova || typeof parsed.nova !== "object") {
+      throw new Error("Invalid llm-config.json: nova object is required for provider=nova");
+    }
+    requireString(parsed.nova.modelId, "nova.modelId");
+    requireString(parsed.nova.awsRegion, "nova.awsRegion");
+  }
 
   cachedConfig = parsed as LlmConfig;
   return cachedConfig;
@@ -104,6 +114,21 @@ function extractJsonObject(text: string): unknown | null {
       return null;
     }
   }
+}
+
+function previewForError(text: string, max = 600): string {
+  const compact = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (compact.length <= max) return compact;
+  return `${compact.slice(0, max)}...`;
+}
+
+function stripCodeFence(text: string): string {
+  const trimmed = String(text || "").trim();
+  const fenced = trimmed.match(/^```[a-zA-Z]*\n([\s\S]*?)\n```$/);
+  if (fenced) return fenced[1].trim();
+  return trimmed;
 }
 
 function formatEnumRules(enums: Record<string, string[]>): string {
@@ -134,46 +159,55 @@ export class LlmClient {
 
   constructor(options: LlmClientOptions = {}) {
     this.config = loadLlmConfig();
-    this.provider = (options.provider || this.config.provider || "mock") as Provider;
+    this.provider = (options.provider || this.config.provider) as Provider;
+    if (!this.provider) {
+      throw new Error("LLM provider is required (gemini or nova)");
+    }
     this.geminiApiKey =
       options.geminiApiKey ||
-      resolveSecretOptional(this.config.gemini.apiKey, this.config.gemini.apiKeyEnv);
-    this.geminiModel = options.geminiModel || this.config.gemini.model;
-    this.novaModelId = options.novaModelId || this.config.nova.modelId;
-    this.awsRegion = options.awsRegion || this.config.nova.awsRegion;
+      resolveSecretOptional(this.config.gemini?.apiKey, this.config.gemini?.apiKeyEnv);
+    this.geminiModel = options.geminiModel || this.config.gemini?.model || "gemini-2.0-flash";
+    this.novaModelId = options.novaModelId || this.config.nova?.modelId || "amazon.nova-lite-v1:0";
+    this.awsRegion = options.awsRegion || this.config.nova?.awsRegion || "us-east-1";
     this.novaAccessKeyId = resolveSecretOptional(
-      this.config.nova.accessKeyId,
-      this.config.nova.accessKeyIdEnv
+      this.config.nova?.accessKeyId,
+      this.config.nova?.accessKeyIdEnv
     );
     this.novaSecretAccessKey = resolveSecretOptional(
-      this.config.nova.secretAccessKey,
-      this.config.nova.secretAccessKeyEnv
+      this.config.nova?.secretAccessKey,
+      this.config.nova?.secretAccessKeyEnv
     );
     this.novaSessionToken =
-      (this.config.nova.sessionTokenEnv && process.env[this.config.nova.sessionTokenEnv]) ||
-      this.config.nova.sessionToken ||
+      (this.config.nova?.sessionTokenEnv && process.env[this.config.nova.sessionTokenEnv]) ||
+      this.config.nova?.sessionToken ||
       "";
     this.bedrock = null;
 
     if (this.provider === "gemini") {
+      if (!this.config.gemini) {
+        throw new Error("Invalid llm-config.json: gemini object is required for provider=gemini");
+      }
       this.geminiApiKey =
         options.geminiApiKey ||
         resolveSecret(
-          this.config.gemini.apiKey,
-          this.config.gemini.apiKeyEnv,
+          this.config.gemini?.apiKey,
+          this.config.gemini?.apiKeyEnv,
           "gemini.apiKey/apiKeyEnv"
         );
     }
 
     if (this.provider === "nova") {
+      if (!this.config.nova) {
+        throw new Error("Invalid llm-config.json: nova object is required for provider=nova");
+      }
       this.novaAccessKeyId = resolveSecret(
-        this.config.nova.accessKeyId,
-        this.config.nova.accessKeyIdEnv,
+        this.config.nova?.accessKeyId,
+        this.config.nova?.accessKeyIdEnv,
         "nova.accessKeyId/accessKeyIdEnv"
       );
       this.novaSecretAccessKey = resolveSecret(
-        this.config.nova.secretAccessKey,
-        this.config.nova.secretAccessKeyEnv,
+        this.config.nova?.secretAccessKey,
+        this.config.nova?.secretAccessKeyEnv,
         "nova.secretAccessKey/secretAccessKeyEnv"
       );
     }
@@ -187,18 +221,18 @@ export class LlmClient {
       awsRegion: this.awsRegion,
       hasGeminiApiKey: Boolean(this.geminiApiKey),
       secretSource: {
-        gemini: this.config.gemini.apiKeyEnv ? `env:${this.config.gemini.apiKeyEnv}` : "inline",
-        novaAccessKeyId: this.config.nova.accessKeyIdEnv
+        gemini: this.config.gemini?.apiKeyEnv ? `env:${this.config.gemini.apiKeyEnv}` : "inline",
+        novaAccessKeyId: this.config.nova?.accessKeyIdEnv
           ? `env:${this.config.nova.accessKeyIdEnv}`
           : "inline",
-        novaSecretAccessKey: this.config.nova.secretAccessKeyEnv
+        novaSecretAccessKey: this.config.nova?.secretAccessKeyEnv
           ? `env:${this.config.nova.secretAccessKeyEnv}`
           : "inline"
       }
     };
   }
 
-  async completeJson<T>({ instruction, input, fallback }: CompleteJsonInput<T>): Promise<T> {
+  async completeJson<T>({ instruction, input }: CompleteJsonInput<T>): Promise<T> {
     const prompt = [
       "Return JSON only. No markdown, no prose.",
       instruction,
@@ -207,15 +241,27 @@ export class LlmClient {
 
     if (this.provider === "gemini") {
       const result = await this.callGemini(prompt);
-      return (extractJsonObject(result) as T) || fallback;
+      const json = extractJsonObject(result);
+      if (!json) {
+        throw new Error(
+          `LLM returned non-JSON output (provider=gemini, model=${this.geminiModel}): ${previewForError(result)}`
+        );
+      }
+      return json as T;
     }
 
     if (this.provider === "nova") {
       const result = await this.callNova(prompt);
-      return (extractJsonObject(result) as T) || fallback;
+      const json = extractJsonObject(result);
+      if (!json) {
+        throw new Error(
+          `LLM returned non-JSON output (provider=nova, model=${this.novaModelId}): ${previewForError(result)}`
+        );
+      }
+      return json as T;
     }
 
-    return fallback;
+    throw new Error(`Unsupported provider: ${String(this.provider)}`);
   }
 
   async scoreAesthetic({
@@ -230,9 +276,39 @@ export class LlmClient {
     return this.completeJson({
       instruction:
         'Score aesthetics from 0..1. JSON schema: {"score":number,"reason":"string","riskFlags":["string"]}',
-      input: { candidateId, genre, designDNA },
-      fallback: { score: 0.75, reason: "fallback", riskFlags: [] }
+      input: { candidateId, genre, designDNA }
     });
+  }
+
+  async generateReactComponent({
+    candidateId,
+    visualFamilyId,
+    params
+  }: {
+    candidateId: string;
+    visualFamilyId: string;
+    params: Record<string, string>;
+  }): Promise<string> {
+    const prompt = [
+      "Return TSX code only. No markdown. No explanation.",
+      "Write a single React component function named GeneratedSpecimen (no export/import lines).",
+      "Use Tailwind utility classes heavily.",
+      "Design must be visually bold and non-generic. Avoid safe/default SaaS look.",
+      "Include these sections: Typography, Buttons, Form, Card, Navigation, Table/List, Alerts.",
+      "Use a clear and unique visual direction for this candidate.",
+      `candidateId=${candidateId}`,
+      `visualFamilyId=${visualFamilyId}`,
+      `params=${JSON.stringify(params)}`
+    ].join("\n");
+
+    if (this.provider === "gemini") {
+      return stripCodeFence(await this.callGemini(prompt));
+    }
+    if (this.provider === "nova") {
+      return stripCodeFence(await this.callNova(prompt));
+    }
+
+    throw new Error(`Unsupported provider for TSX generation: ${String(this.provider)}`);
   }
 
   async generateParamSets({
@@ -267,8 +343,7 @@ export class LlmClient {
         `Diversity rules: ${JSON.stringify(diversityRules)}`,
         `Enums: ${formatEnumRules(enums)}`
       ].join(" "),
-      input: { targetUiId, baseThemeId, count, mode, focusFamilies, diversityRules },
-      fallback: { count, candidates: [] }
+      input: { targetUiId, baseThemeId, count, mode, focusFamilies, diversityRules }
     });
   }
 
@@ -308,8 +383,7 @@ export class LlmClient {
         `Diversity rules: ${JSON.stringify(diversityRules)}`,
         `Enums: ${formatEnumRules(enums)}`
       ].join(" "),
-      input: { targetUiId, baseThemeId, count, mode, focusFamilies, previousCandidates },
-      fallback: { count, candidates: previousCandidates || [] }
+      input: { targetUiId, baseThemeId, count, mode, focusFamilies, previousCandidates }
     });
   }
 

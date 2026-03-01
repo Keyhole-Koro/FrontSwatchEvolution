@@ -1,7 +1,10 @@
 node_modules/
 dist/
 *.tsbuildinfo
+data/history/
 .env
 .env.*
 npm-debug.log*
 config/llm-config.json
+
+data

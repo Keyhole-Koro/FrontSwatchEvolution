@@ -14,6 +14,7 @@ Evolution engine service for diverse UI design proposal generation.
 ```bash
 npm install
 cp config/llm-config.example.json config/llm-config.json
+npx playwright install chromium
 npm run dev
 ```
 
@@ -106,3 +107,6 @@ Type profile is resolved by the engine (machine-side), not requested from LLM.
 - Startup fails if `config/llm-config.json` is missing or invalid.
 - Secrets should be loaded via env vars referenced from JSON config.
 - Job config is `paramSetCount` + `diversityRules` centric.
+- Each run writes JSON history to `data/history/*.json` (timeline + result/error).
+- New runs can auto-reuse recent `focusFamilies` from completed history when not explicitly provided.
+- Candidate screenshots are rendered by Playwright and served via `GET /artifacts/...`.
